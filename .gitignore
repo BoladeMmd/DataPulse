@@ -1,5 +1,16 @@
+
+# Variables d'environnement et secrets
 .env
+.env.*
+!.env.example
+
+# Python
 __pycache__/
-.pytest_cache/
 *.py[cod]
+.pytest_cache/
 .venv/
+venv/
+
+# Fichiers locaux
+*.log
+test.db

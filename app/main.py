@@ -5,6 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from contextlib import asynccontextmanager
+from prometheus_fastapi_instrumentator import Instrumentator
+import logging
+
+from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.session import Base, engine
 from app.models.transaction import Transaction
@@ -17,6 +22,8 @@ from app.schemas.transaction import (
     TransactionScoreResponse,
 )
 
+logger = logging.getLogger(__name__)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
@@ -28,6 +35,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+Instrumentator().instrument(app).expose(app)
 
 
 @app.get("/", tags=["Accueil"])
@@ -74,14 +83,23 @@ def create_transaction(
         db.add(transaction)
         db.commit()
         db.refresh(transaction)
-        return transaction
-    except SQLAlchemyError as exc:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="Erreur lors de l'enregistrement de la transaction.",
-        ) from exc
 
+    except SQLAlchemyError:
+        db.rollback()
+
+        logger.exception(
+            "Échec de l'enregistrement d'une transaction"
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Service temporairement indisponible. "
+                "Veuillez réessayer plus tard."
+            ),
+        )
+
+    return transaction
 
 @app.get(
     "/transactions",
