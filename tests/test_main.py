@@ -12,7 +12,7 @@ from app.db.session import get_db, settings
 # Configuration des tests
 # ==========================================
 
-client = TestClient(app)
+#client = TestClient(app)
 
 TEST_API_KEY = settings.api_key
 HEADERS = {
@@ -24,14 +24,14 @@ HEADERS = {
 # Tests des routes publiques
 # ==========================================
 
-def test_home():
+def test_home(client):
     response = client.get("/")
 
     assert response.status_code == 200
     assert response.json()["message"] == "Bienvenue sur DataPulse API"
 
 
-def test_health():
+def test_health(client):
     response = client.get("/health")
 
     assert response.status_code == 200
@@ -42,7 +42,7 @@ def test_health():
 # Tests des opérations sur les transactions
 # ==========================================
 
-def test_create_transaction():
+def test_create_transaction(client):
     response = client.post(
         "/transactions",
         json={
@@ -65,7 +65,7 @@ def test_create_transaction():
     assert data["risk_level"] == "low"
 
 
-def test_list_transactions():
+def test_list_transactions(client):
     response = client.get(
         "/transactions",
         headers=HEADERS,
@@ -75,7 +75,7 @@ def test_list_transactions():
     assert isinstance(response.json(), list)
 
 
-def test_score_transaction():
+def test_score_transaction(client):
     response = client.post(
         "/transactions/score",
         json={
@@ -99,7 +99,7 @@ def test_score_transaction():
 # Tests de validation des données
 # ==========================================
 
-def test_reject_zero_amount():
+def test_reject_zero_amount(client):
     response = client.post(
         "/transactions",
         json={
@@ -114,7 +114,7 @@ def test_reject_zero_amount():
     assert response.status_code == 422
 
 
-def test_reject_negative_amount():
+def test_reject_negative_amount(client):
     response = client.post(
         "/transactions",
         json={
@@ -129,7 +129,7 @@ def test_reject_negative_amount():
     assert response.status_code == 422
 
 
-def test_reject_invalid_country():
+def test_reject_invalid_country(client):
     response = client.post(
         "/transactions",
         json={
@@ -144,7 +144,7 @@ def test_reject_invalid_country():
     assert response.status_code == 422
 
 
-def test_reject_blank_merchant():
+def test_reject_blank_merchant(client):
     response = client.post(
         "/transactions",
         json={
@@ -159,7 +159,7 @@ def test_reject_blank_merchant():
     assert response.status_code == 422
 
 
-def test_reject_blank_transaction_type():
+def test_reject_blank_transaction_type(client):
     response = client.post(
         "/transactions",
         json={
@@ -178,14 +178,14 @@ def test_reject_blank_transaction_type():
 # Tests de sécurité API Key
 # ==========================================
 
-def test_reject_missing_api_key():
+def test_reject_missing_api_key(client):
     response = client.get("/transactions")
 
     assert response.status_code == 401
     assert response.json()["detail"] == "Clé API invalide ou manquante"
 
 
-def test_reject_invalid_api_key():
+def test_reject_invalid_api_key(client):
     response = client.get(
         "/transactions",
         headers={
@@ -197,7 +197,7 @@ def test_reject_invalid_api_key():
     assert response.json()["detail"] == "Clé API invalide ou manquante"
 
 
-def test_accept_valid_api_key():
+def test_accept_valid_api_key(client):
     response = client.get(
         "/transactions",
         headers=HEADERS,
@@ -210,7 +210,7 @@ def test_accept_valid_api_key():
 # Test de gestion des erreurs PostgreSQL
 # ==========================================
 
-def test_transaction_database_error_returns_503():
+def test_transaction_database_error_returns_503(client):
 
     mock_db = MagicMock()
 
@@ -221,23 +221,29 @@ def test_transaction_database_error_returns_503():
     def override_get_db():
         yield mock_db
 
+    # Conserver l'override précédent
+    previous_override = app.dependency_overrides.get(get_db)
+
     app.dependency_overrides[get_db] = override_get_db
 
     try:
-        with TestClient(app) as test_client:
-            response = test_client.post(
-                "/transactions",
-                json={
-                    "amount": 250000,
-                    "country": "SN",
-                    "merchant": "Supermarche Dakar",
-                    "transaction_type": "payment",
-                },
-                headers=HEADERS,
-            )
+        response = client.post(
+            "/transactions",
+            json={
+                "amount": 250000,
+                "country": "SN",
+                "merchant": "Supermarche Dakar",
+                "transaction_type": "payment",
+            },
+            headers=HEADERS,
+        )
 
     finally:
-        app.dependency_overrides.clear()
+        # Restaurer la fixture de base
+        if previous_override is not None:
+            app.dependency_overrides[get_db] = previous_override
+        else:
+            app.dependency_overrides.pop(get_db, None)
 
     assert response.status_code == 503
 
