@@ -1,33 +1,42 @@
-from app.schemas.transaction import TransactionScoreResponse
-from app.services.scoring import score_transaction
-from fastapi import Depends, FastAPI, HTTPException, status
+
+import logging
+import secrets
+from contextlib import asynccontextmanager
+
+from fastapi import (
+    Depends,
+    FastAPI,
+    HTTPException,
+    status,
+)
+from fastapi.security import APIKeyHeader
+from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-from contextlib import asynccontextmanager
-from prometheus_fastapi_instrumentator import Instrumentator
-import logging
 
-from fastapi import HTTPException
-from sqlalchemy.exc import SQLAlchemyError
-
-from app.db.session import Base, engine
-from app.models.transaction import Transaction
-
-from app.db.session import get_db
+from app.db.session import Base, engine, get_db, settings
 from app.models.transaction import Transaction
 from app.schemas.transaction import (
     TransactionCreate,
     TransactionResponse,
     TransactionScoreResponse,
 )
+from app.services.scoring import score_transaction
+
 
 logger = logging.getLogger(__name__)
+
+
+# =========================
+# Cycle de vie de l'application
+# =========================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     yield
+
 
 app = FastAPI(
     title="DataPulse API",
@@ -36,8 +45,40 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# =========================
+# Configuration API Key
+# =========================
+
+api_key_header = APIKeyHeader(
+    name="X-API-Key",
+    auto_error=False,
+)
+
+
+def verify_api_key(
+    api_key: str = Depends(api_key_header),
+):
+    if not api_key or not secrets.compare_digest(
+        api_key,
+        settings.api_key,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clé API invalide ou manquante",
+        )
+
+
+# =========================
+# Monitoring Prometheus
+# =========================
+
 Instrumentator().instrument(app).expose(app)
 
+
+# =========================
+# Routes publiques
+# =========================
 
 @app.get("/", tags=["Accueil"])
 def home():
@@ -55,13 +96,17 @@ def health_check():
     }
 
 
+# =========================
+# Routes protégées
+# =========================
+
 @app.post(
     "/transactions",
     response_model=TransactionResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(verify_api_key)],
     tags=["Transactions"],
 )
-
 def create_transaction(
     transaction_data: TransactionCreate,
     db: Session = Depends(get_db),
@@ -92,7 +137,7 @@ def create_transaction(
         )
 
         raise HTTPException(
-            status_code=503,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Service temporairement indisponible. "
                 "Veuillez réessayer plus tard."
@@ -101,22 +146,28 @@ def create_transaction(
 
     return transaction
 
+
 @app.get(
     "/transactions",
     response_model=list[TransactionResponse],
+    dependencies=[Depends(verify_api_key)],
     tags=["Transactions"],
 )
-def list_transactions(db: Session = Depends(get_db)):
+def list_transactions(
+    db: Session = Depends(get_db),
+):
     statement = (
         select(Transaction)
         .order_by(Transaction.id.desc())
     )
+
     return db.scalars(statement).all()
 
 
 @app.post(
     "/transactions/score",
     response_model=TransactionScoreResponse,
+    dependencies=[Depends(verify_api_key)],
     tags=["Scoring"],
 )
 def score_transaction_endpoint(
@@ -129,4 +180,3 @@ def score_transaction_endpoint(
     )
 
     return result
-
