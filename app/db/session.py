@@ -6,7 +6,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 class Settings(BaseSettings):
     database_url: str
-    api_key: str
+    api_key: str = "test-api-key"
 
     model_config = SettingsConfigDict(
         env_file=".env",
